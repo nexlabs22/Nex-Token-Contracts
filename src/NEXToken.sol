@@ -170,4 +170,53 @@ contract NEXToken is ERC20, ERC20Votes, ERC20Permit, Ownable {
     function areTransferRestrictionsEnabled() external view returns (bool) {
         return _transferRestrictionsEnabled;
     }
+
+    /**
+     * @dev Mints new tokens to a specified address.
+     * Can only be called by the owner.
+     */
+    function mint(address to, uint256 amount) external onlyOwner {
+        _mint(to, amount);
+    }
+
+    // Buyback and Burn function (Deflationary Mechanism)
+
+    /**
+     * @dev Burns tokens from the contract balance, implementing buyback and burn.
+     * Can only be called by the owner.
+     */
+    function buybackAndBurn(uint256 amount) external onlyOwner {
+        _burn(address(this), amount);
+    }
+
+    // The functions below are overrides required by Solidity for ERC20Votes
+
+    function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
+        // Blacklist checks
+        require(!_blacklist[from], "Sender is blacklisted");
+        require(!_blacklist[to], "Recipient is blacklisted");
+
+        // Whitelist checks (when enabled)
+        if (_whitelistEnabled) {
+            // Allow minting and burning even when whitelist is enabled
+            if (from != address(0) && to != address(0)) {
+                require(_whitelist[from], "Sender is not whitelisted");
+                require(_whitelist[to], "Recipient is not whitelisted");
+            }
+        }
+
+        // Transfer restrictions during cliff/vesting periods
+        if (_transferRestrictionsEnabled) {
+            // Allow transfers to allowed staking contracts
+            if (!_allowedStakingContracts[to]) {
+                require(from == address(0) || to == address(0), "Transfers restricted during cliff/vesting period");
+            }
+        }
+
+        super._update(from, to, value);
+    }
+
+    function nonces(address owner) public view override(ERC20Permit, Nonces) returns (uint256) {
+        return super.nonces(owner);
+    }
 }
