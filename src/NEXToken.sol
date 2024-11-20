@@ -17,4 +17,23 @@ contract NEXToken is ERC20, ERC20Votes, ERC20Permit, Ownable {
     event Unwhitelisted(address indexed account);
     event WhitelistEnabled();
     event WhitelistDisabled();
+
+    constructor(
+        address vestingContractAddress,
+        address publicSaleAddress,
+        address communityAddress,
+        address treasuryAddress,
+        address liquidityAddress
+    ) ERC20("NEX Token", "NEX") ERC20Permit("NEX Token") Ownable(msg.sender) {
+        uint256 initialSupply = 100_000_000 * 10 ** decimals();
+
+        _mint(address(this), initialSupply);
+
+        _transfer(address(this), vestingContractAddress, 78_000_000 * 10 ** decimals());
+        _transfer(address(this), publicSaleAddress, 3_000_000 * 10 ** decimals());
+
+        _transfer(address(this), communityAddress, 10_000_000 * 10 ** decimals());
+        _transfer(address(this), treasuryAddress, 14_000_000 * 10 ** decimals());
+        _transfer(address(this), liquidityAddress, 5_000_000 * 10 ** decimals());
+    }
 }
