@@ -36,4 +36,81 @@ contract NEXToken is ERC20, ERC20Votes, ERC20Permit, Ownable {
         _transfer(address(this), treasuryAddress, 14_000_000 * 10 ** decimals());
         _transfer(address(this), liquidityAddress, 5_000_000 * 10 ** decimals());
     }
+
+    /**
+     * @dev Adds an account to the blacklist.
+     * Can only be called by the owner.
+     */
+    function addToBlacklist(address account) external onlyOwner {
+        _blacklist[account] = true;
+        emit Blacklisted(account);
+    }
+
+    /**
+     * @dev Removes an account from the blacklist.
+     * Can only be called by the owner.
+     */
+    function removeFromBlacklist(address account) external onlyOwner {
+        _blacklist[account] = false;
+        emit Unblacklisted(account);
+    }
+
+    /**
+     * @dev Checks if an account is blacklisted.
+     */
+    function isBlacklisted(address account) external view returns (bool) {
+        return _blacklist[account];
+    }
+
+    // Whitelist functions
+
+    /**
+     * @dev Adds an account to the whitelist.
+     * Can only be called by the owner.
+     */
+    function addToWhitelist(address account) external onlyOwner {
+        _whitelist[account] = true;
+        emit Whitelisted(account);
+    }
+
+    /**
+     * @dev Removes an account from the whitelist.
+     * Can only be called by the owner.
+     */
+    function removeFromWhitelist(address account) external onlyOwner {
+        _whitelist[account] = false;
+        emit Unwhitelisted(account);
+    }
+
+    /**
+     * @dev Checks if an account is whitelisted.
+     */
+    function isWhitelisted(address account) external view returns (bool) {
+        return _whitelist[account];
+    }
+
+    /**
+     * @dev Enables the whitelist restriction.
+     * Can only be called by the owner.
+     */
+    function enableWhitelist() external onlyOwner {
+        _whitelistEnabled = true;
+        emit WhitelistEnabled();
+    }
+
+    /**
+     * @dev Disables the whitelist restriction.
+     * Can only be called by the owner.
+     */
+    function disableWhitelist() external onlyOwner {
+        _whitelistEnabled = false;
+        emit WhitelistDisabled();
+    }
+
+    /**
+     * @dev Checks if the whitelist is enabled.
+     */
+    function isWhitelistEnabled() external view returns (bool) {
+        return _whitelistEnabled;
+    }
 }
