@@ -1,75 +1,95 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.26;
+pragma solidity ^0.8.18;
 
-import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
-import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 
-contract NEXToken is ERC20, ERC20Votes, ERC20Permit, Ownable {
+/**
+ * @title NEX Token Contract
+ * @dev ERC20 token with minimal vesting awareness. Vesting is managed by the Vesting contract.
+ */
+contract NEXToken is ERC20Upgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable, AccessControlUpgradeable {
+    uint256 private constant TOTAL_SUPPLY = 100_000_000 * 10 ** 18;
+
+    bytes32 public constant ADMIN_ROLE = DEFAULT_ADMIN_ROLE;
+    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
+
+    address public vestingContract; // Address of the Vesting Contract
+    address public stakingContract; // Address of the Staking Contract
+
     mapping(address => bool) private _blacklist;
     mapping(address => bool) private _whitelist;
-    bool private _whitelistEnabled = false;
 
-    mapping(address => bool) private _allowedStakingContracts;
-    bool private _transferRestrictionsEnabled = false;
-
+    event StakingContractUpdated(address indexed newStakingContract);
+    event VestingContractUpdated(address indexed newVestingContract);
+    event TokensBurned(address indexed account, uint256 amount);
     event Blacklisted(address indexed account);
     event Unblacklisted(address indexed account);
     event Whitelisted(address indexed account);
     event Unwhitelisted(address indexed account);
-    event WhitelistEnabled();
-    event WhitelistDisabled();
-    event StakingContractAdded(address indexed stakingContract);
-    event StakingContractRemoved(address indexed stakingContract);
-    event TransferRestrictionsEnabled();
-    event TransferRestrictionsDisabled();
 
-    constructor(
-        address vestingContractAddress,
-        address publicSaleAddress,
-        address communityAddress,
-        address treasuryAddress,
-        address liquidityAddress
-    ) ERC20("NEX Token", "NEX") ERC20Permit("NEX Token") Ownable(msg.sender) {
-        uint256 initialSupply = 100_000_000 * 10 ** decimals();
+    function initialize(address _vestingContract) public initializer {
+        __ERC20_init("NEX Token", "NEX");
+        __Ownable_init(msg.sender);
+        __ReentrancyGuard_init();
 
-        _mint(address(this), initialSupply);
+        _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
+        _grantRole(MINTER_ROLE, _msgSender());
 
-        _transfer(address(this), vestingContractAddress, 78_000_000 * 10 ** decimals());
-        _transfer(address(this), publicSaleAddress, 3_000_000 * 10 ** decimals());
+        _mint(address(this), TOTAL_SUPPLY);
 
-        _transfer(address(this), communityAddress, 10_000_000 * 10 ** decimals());
-        _transfer(address(this), treasuryAddress, 14_000_000 * 10 ** decimals());
-        _transfer(address(this), liquidityAddress, 5_000_000 * 10 ** decimals());
+        vestingContract = _vestingContract;
+
+        _transfer(msg.sender, vestingContract, 92_000_000 * 10 ** 18);
     }
 
     /**
-     * @dev Adds an account to the blacklist.
-     * Can only be called by the owner.
+     * @dev Set the Vesting Contract address.
      */
-    function addToBlacklist(address account) external onlyOwner {
-        _blacklist[account] = true;
-        emit Blacklisted(account);
+    function setVestingContract(address _vestingContract) external onlyRole(ADMIN_ROLE) {
+        require(_vestingContract != address(0), "Vesting contract cannot be zero address");
+        vestingContract = _vestingContract;
+        emit VestingContractUpdated(_vestingContract);
     }
 
     /**
-     * @dev Removes an account from the blacklist.
-     * Can only be called by the owner.
+     * @dev Set the Staking Contract address.
      */
-    function removeFromBlacklist(address account) external onlyOwner {
-        _blacklist[account] = false;
-        emit Unblacklisted(account);
+    function setStakingContract(address _stakingContract) external onlyRole(ADMIN_ROLE) {
+        require(_stakingContract != address(0), "Staking contract cannot be zero address");
+        stakingContract = _stakingContract;
+        emit StakingContractUpdated(_stakingContract);
     }
 
     /**
-     * @dev Checks if an account is blacklisted.
+     * @dev Mint new tokens.
      */
-    function isBlacklisted(address account) external view returns (bool) {
-        return _blacklist[account];
+    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) {
+        require(to != address(0), "Cannot mint to zero address");
+        _mint(to, amount);
     }
 
-    // Whitelist functions
+    /**
+     * @dev Burn tokens from the caller's account.
+     */
+    function burn(uint256 amount) external {
+        _burn(msg.sender, amount);
+        emit TokensBurned(msg.sender, amount);
+    }
+
+    function setupVestingContract(address _vestingContract) external onlyOwner {
+        require(_vestingContract != address(0), "Vesting contract cannot be zero address");
+        require(vestingContract == address(0), "Vesting contract already set");
+
+        vestingContract = _vestingContract;
+
+        // Transfer 92,000,000 tokens to the vesting contract
+        _transfer(address(this), _vestingContract, 92_000_000 * 10 ** 18);
+
+        emit VestingContractUpdated(_vestingContract);
+    }
 
     /**
      * @dev Adds an account to the whitelist.
@@ -97,126 +117,83 @@ contract NEXToken is ERC20, ERC20Votes, ERC20Permit, Ownable {
     }
 
     /**
-     * @dev Enables the whitelist restriction.
+     * @dev Adds an account to the blacklist.
      * Can only be called by the owner.
      */
-    function enableWhitelist() external onlyOwner {
-        _whitelistEnabled = true;
-        emit WhitelistEnabled();
+    function addToBlacklist(address account) external onlyOwner {
+        _blacklist[account] = true;
+        emit Blacklisted(account);
     }
 
     /**
-     * @dev Disables the whitelist restriction.
+     * @dev Removes an account from the blacklist.
      * Can only be called by the owner.
      */
-    function disableWhitelist() external onlyOwner {
-        _whitelistEnabled = false;
-        emit WhitelistDisabled();
+    function removeFromBlacklist(address account) external onlyOwner {
+        _blacklist[account] = false;
+        emit Unblacklisted(account);
     }
 
     /**
-     * @dev Checks if the whitelist is enabled.
+     * @dev Checks if an account is blacklisted.
      */
-    function isWhitelistEnabled() external view returns (bool) {
-        return _whitelistEnabled;
+    function isBlacklisted(address account) external view returns (bool) {
+        return _blacklist[account];
     }
 
     /**
-     * @dev Adds an address to the allowed staking contracts.
-     * Can only be called by the owner.
+     * @dev Overrides the ERC20 _update function to enforce vesting restrictions.
+     *      Allows transfers to the staking contract irrespective of vesting.
+     * @param from Address tokens are transferred from.
+     * @param to Address tokens are transferred to.
+     * @param amount Amount of tokens being transferred.
      */
-    function addAllowedStakingContract(address stakingContract) external onlyOwner {
-        _allowedStakingContracts[stakingContract] = true;
-        emit StakingContractAdded(stakingContract);
-    }
+    function _update(address from, address to, uint256 amount) internal virtual override {
+        super._update(from, to, amount);
 
-    /**
-     * @dev Removes an address from the allowed staking contracts.
-     * Can only be called by the owner.
-     */
-    function removeAllowedStakingContract(address stakingContract) external onlyOwner {
-        _allowedStakingContracts[stakingContract] = false;
-        emit StakingContractRemoved(stakingContract);
-    }
-
-    /**
-     * @dev Checks if an address is an allowed staking contract.
-     */
-    function isAllowedStakingContract(address stakingContract) external view returns (bool) {
-        return _allowedStakingContracts[stakingContract];
-    }
-
-    /**
-     * @dev Enables transfer restrictions during cliff/vesting periods.
-     * Can only be called by the owner.
-     */
-    function enableTransferRestrictions() external onlyOwner {
-        _transferRestrictionsEnabled = true;
-        emit TransferRestrictionsEnabled();
-    }
-
-    /**
-     * @dev Disables transfer restrictions.
-     * Can only be called by the owner.
-     */
-    function disableTransferRestrictions() external onlyOwner {
-        _transferRestrictionsEnabled = false;
-        emit TransferRestrictionsDisabled();
-    }
-
-    /**
-     * @dev Checks if transfer restrictions are enabled.
-     */
-    function areTransferRestrictionsEnabled() external view returns (bool) {
-        return _transferRestrictionsEnabled;
-    }
-
-    /**
-     * @dev Mints new tokens to a specified address.
-     * Can only be called by the owner.
-     */
-    function mint(address to, uint256 amount) external onlyOwner {
-        _mint(to, amount);
-    }
-
-    // Buyback and Burn function (Deflationary Mechanism)
-
-    /**
-     * @dev Burns tokens from the contract balance, implementing buyback and burn.
-     * Can only be called by the owner.
-     */
-    function buybackAndBurn(uint256 amount) external onlyOwner {
-        _burn(address(this), amount);
-    }
-
-    // The functions below are overrides required by Solidity for ERC20Votes
-
-    function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
-        // Blacklist checks
-        require(!_blacklist[from], "Sender is blacklisted");
-        require(!_blacklist[to], "Recipient is blacklisted");
-
-        // Whitelist checks (when enabled)
-        if (_whitelistEnabled) {
-            // Allow minting and burning even when whitelist is enabled
-            if (from != address(0) && to != address(0)) {
-                require(_whitelist[from], "Sender is not whitelisted");
-                require(_whitelist[to], "Recipient is not whitelisted");
-            }
+        // Allow minting and burning without restrictions
+        if (from == address(0) || to == address(0)) {
+            return;
         }
 
-        // Transfer restrictions during cliff/vesting periods
-        if (_transferRestrictionsEnabled) {
-            // Allow transfers to allowed staking contracts
-            if (!_allowedStakingContracts[to]) {
-                require(from == address(0) || to == address(0), "Transfers restricted during cliff/vesting period");
-            }
+        // Allow transfers to the staking contract irrespective of vesting
+        if (to == stakingContract) {
+            return;
         }
 
-        super._update(from, to, value);
+        // Skip checks for transfers from the contract itself
+        if (from == address(this)) {
+            return;
+        }
+
+        // Restrict blacklisted addresses
+        require(!_blacklist[from] && !_blacklist[to], "Address is blacklisted");
+
+        // Vesting restriction logic (only if vestingContract is set)
+        if (vestingContract != address(0)) {
+            IVesting vesting = IVesting(vestingContract);
+
+            uint256 vestedBalance = vesting.getVestedBalance(from);
+            require(amount <= vestedBalance, "Transfer amount exceeds vested balance");
+        }
+
+        // VestingSchedule storage schedule = vestingSchedules[from];
+
+        // if (schedule.totalAmount > 0) {
+        //     uint256 vested = _vestedAmount(schedule);
+        //     uint256 released = schedule.amountReleased;
+        //     uint256 balance = balanceOf(from);
+
+        //     uint256 transferable = (balance + released) - (schedule.totalAmount - vested);
+
+        //     // Allow the transfer if the amount is less than or equal to transferable tokens
+        //     require(amount <= transferable, "Transfer amount exceeds available tokens");
+        // }
     }
 
-    function nonces(address owner) public view override(ERC20Permit, Nonces) returns (uint256) {
-        return super.nonces(owner);
-    }
+    uint256[50] private __gap; // Reserve storage gap for future upgrades
+}
+
+interface IVesting {
+    function getVestedBalance(address account) external view returns (uint256);
 }
