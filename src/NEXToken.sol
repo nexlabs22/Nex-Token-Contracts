@@ -18,6 +18,9 @@ contract NEXToken is ERC20Upgradeable, OwnableUpgradeable, ReentrancyGuardUpgrad
     address public vestingContract;
     address public stakingContract;
 
+    // address public constant PUBLIC_SALE = 0xABC; // Replace with actual address
+    // address public constant LIQUIDITY_POOL = 0x876; // Replace with actual address
+
     mapping(address => bool) private _blacklist;
     mapping(address => bool) private _whitelist;
 
@@ -43,6 +46,11 @@ contract NEXToken is ERC20Upgradeable, OwnableUpgradeable, ReentrancyGuardUpgrad
         emit VestingContractUpdated(_vestingContract);
 
         _transfer(address(this), vestingContract, 92_000_000 * 10 ** 18);
+        // _transfer(address(this), publicSaleAddress, 3_000_000 * 10 ** 18); // 3%
+        // _transfer(address(this), liquidityAddress, 5_000_000 * 10 ** 18); // 5%
+
+        // uint256 remainingBalance = balanceOf(address(this));
+        // require(remainingBalance == 0, "All tokens must be distributed");
     }
 
     /**
@@ -148,11 +156,31 @@ contract NEXToken is ERC20Upgradeable, OwnableUpgradeable, ReentrancyGuardUpgrad
 
         require(!_blacklist[from] && !_blacklist[to], "Address is blacklisted");
 
-        if (vestingContract != address(0) && from != vestingContract) {
+        if (vestingContract != address(0)) {
             IVesting vesting = IVesting(vestingContract);
-            uint256 vestedBalance = vesting.getVestedBalance(from);
-            require(amount <= vestedBalance, "Transfer amount exceeds vested balance");
+
+            uint256 lockedBalance = vesting.getLockedBalance(from);
+
+            uint256 totalBalance = balanceOf(from);
+
+            // uint256 transferableBalance = totalBalance - lockedBalance;
+
+            // Calculate the transferable (vested) balance with underflow protection
+            uint256 transferableBalance;
+            if (totalBalance > lockedBalance) {
+                transferableBalance = totalBalance - lockedBalance;
+            } else {
+                transferableBalance = 0;
+            }
+
+            require(amount <= transferableBalance, "Transfer amount exceeds available balance");
         }
+
+        // if (vestingContract != address(0) && from != vestingContract) {
+        //     IVesting vesting = IVesting(vestingContract);
+        //     uint256 vestedBalance = vesting.getVestedBalance(from);
+        //     require(amount <= vestedBalance, "Transfer amount exceeds vested balance");
+        // }
     }
 
     uint256[50] private __gap;
