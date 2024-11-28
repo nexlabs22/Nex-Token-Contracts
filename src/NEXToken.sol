@@ -1,23 +1,22 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.18;
+pragma solidity ^0.8.26;
 
-import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {ERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20VotesUpgradeable.sol";
+
+import {IVesting} from "./interfaces/IVesting.sol";
 
 /**
  * @title NEX Token Contract
  * @dev ERC20 token with minimal vesting awareness. Vesting is managed by the Vesting contract.
  */
-contract NEXToken is ERC20Upgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable, AccessControlUpgradeable {
+contract NEXToken is ERC20Upgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable, ERC20VotesUpgradeable {
     uint256 private constant TOTAL_SUPPLY = 100_000_000 * 10 ** 18;
 
-    bytes32 public constant ADMIN_ROLE = DEFAULT_ADMIN_ROLE;
-    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
-
-    address public vestingContract; // Address of the Vesting Contract
-    address public stakingContract; // Address of the Staking Contract
+    address public vestingContract;
+    address public stakingContract;
 
     mapping(address => bool) private _blacklist;
     mapping(address => bool) private _whitelist;
@@ -31,33 +30,25 @@ contract NEXToken is ERC20Upgradeable, OwnableUpgradeable, ReentrancyGuardUpgrad
     event Unwhitelisted(address indexed account);
 
     function initialize(address _vestingContract) public initializer {
+        require(_vestingContract != address(0), "Vesting contract cannot be zero address");
+
         __ERC20_init("NEX Token", "NEX");
+        __ERC20Votes_init();
         __Ownable_init(msg.sender);
         __ReentrancyGuard_init();
-
-        _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
-        _grantRole(MINTER_ROLE, _msgSender());
 
         _mint(address(this), TOTAL_SUPPLY);
 
         vestingContract = _vestingContract;
-
-        _transfer(msg.sender, vestingContract, 92_000_000 * 10 ** 18);
-    }
-
-    /**
-     * @dev Set the Vesting Contract address.
-     */
-    function setVestingContract(address _vestingContract) external onlyRole(ADMIN_ROLE) {
-        require(_vestingContract != address(0), "Vesting contract cannot be zero address");
-        vestingContract = _vestingContract;
         emit VestingContractUpdated(_vestingContract);
+
+        _transfer(address(this), vestingContract, 92_000_000 * 10 ** 18);
     }
 
     /**
      * @dev Set the Staking Contract address.
      */
-    function setStakingContract(address _stakingContract) external onlyRole(ADMIN_ROLE) {
+    function setStakingContract(address _stakingContract) external onlyOwner {
         require(_stakingContract != address(0), "Staking contract cannot be zero address");
         stakingContract = _stakingContract;
         emit StakingContractUpdated(_stakingContract);
@@ -66,7 +57,7 @@ contract NEXToken is ERC20Upgradeable, OwnableUpgradeable, ReentrancyGuardUpgrad
     /**
      * @dev Mint new tokens.
      */
-    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) {
+    function mint(address to, uint256 amount) external onlyOwner {
         require(to != address(0), "Cannot mint to zero address");
         _mint(to, amount);
     }
@@ -77,18 +68,6 @@ contract NEXToken is ERC20Upgradeable, OwnableUpgradeable, ReentrancyGuardUpgrad
     function burn(uint256 amount) external {
         _burn(msg.sender, amount);
         emit TokensBurned(msg.sender, amount);
-    }
-
-    function setupVestingContract(address _vestingContract) external onlyOwner {
-        require(_vestingContract != address(0), "Vesting contract cannot be zero address");
-        require(vestingContract == address(0), "Vesting contract already set");
-
-        vestingContract = _vestingContract;
-
-        // Transfer 92,000,000 tokens to the vesting contract
-        _transfer(address(this), _vestingContract, 92_000_000 * 10 ** 18);
-
-        emit VestingContractUpdated(_vestingContract);
     }
 
     /**
@@ -148,52 +127,33 @@ contract NEXToken is ERC20Upgradeable, OwnableUpgradeable, ReentrancyGuardUpgrad
      * @param to Address tokens are transferred to.
      * @param amount Amount of tokens being transferred.
      */
-    function _update(address from, address to, uint256 amount) internal virtual override {
+    function _update(address from, address to, uint256 amount)
+        internal
+        virtual
+        override(ERC20Upgradeable, ERC20VotesUpgradeable)
+    {
         super._update(from, to, amount);
 
-        // Allow minting and burning without restrictions
         if (from == address(0) || to == address(0)) {
             return;
         }
 
-        // Allow transfers to the staking contract irrespective of vesting
         if (to == stakingContract) {
             return;
         }
 
-        // Skip checks for transfers from the contract itself
-        if (from == address(this)) {
+        if (from == address(this) || from == vestingContract) {
             return;
         }
 
-        // Restrict blacklisted addresses
         require(!_blacklist[from] && !_blacklist[to], "Address is blacklisted");
 
-        // Vesting restriction logic (only if vestingContract is set)
-        if (vestingContract != address(0)) {
+        if (vestingContract != address(0) && from != vestingContract) {
             IVesting vesting = IVesting(vestingContract);
-
             uint256 vestedBalance = vesting.getVestedBalance(from);
             require(amount <= vestedBalance, "Transfer amount exceeds vested balance");
         }
-
-        // VestingSchedule storage schedule = vestingSchedules[from];
-
-        // if (schedule.totalAmount > 0) {
-        //     uint256 vested = _vestedAmount(schedule);
-        //     uint256 released = schedule.amountReleased;
-        //     uint256 balance = balanceOf(from);
-
-        //     uint256 transferable = (balance + released) - (schedule.totalAmount - vested);
-
-        //     // Allow the transfer if the amount is less than or equal to transferable tokens
-        //     require(amount <= transferable, "Transfer amount exceeds available tokens");
-        // }
     }
 
-    uint256[50] private __gap; // Reserve storage gap for future upgrades
-}
-
-interface IVesting {
-    function getVestedBalance(address account) external view returns (uint256);
+    uint256[50] private __gap;
 }
