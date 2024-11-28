@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import "forge-std/Test.sol";
 import "../src/NEXToken.sol";
 import "../src/Vesting.sol";
+import "../src/interfaces/IVesting.sol";
 
 contract NEXTokenTest is Test {
     NEXToken public nexToken;
@@ -13,23 +14,25 @@ contract NEXTokenTest is Test {
     address public vestingContract = address(0x4);
 
     function setUp() public {
-        // Deploy NEXToken contract
         nexToken = new NEXToken();
 
-        // Initialize NEXToken with vesting contract
+        Vesting vesting = new Vesting();
+
+        vm.prank(owner);
+        vesting.initialize(IERC20(address(nexToken)));
+
+        vestingContract = address(vesting);
+
         vm.prank(owner);
         nexToken.initialize(vestingContract);
 
-        // Set staking contract
         vm.prank(owner);
         nexToken.setStakingContract(stakingContract);
     }
 
     function testInitialization() public view {
-        // Verify total supply is minted
         assertEq(nexToken.totalSupply(), 100_000_000 * 10 ** 18);
 
-        // Verify 92 million tokens are transferred to the vesting contract
         assertEq(nexToken.balanceOf(vestingContract), 92_000_000 * 10 ** 18);
     }
 
@@ -132,38 +135,32 @@ contract NEXTokenTest is Test {
     function testTransferToNonStakingContractDuringVesting() public {
         address nonStakingContract = address(0x7);
 
-        // Mint tokens to the user
+        uint256 start = block.timestamp;
+        uint256 cliffDuration = 30 days;
+        uint256 duration = 180 days;
+        uint256 totalAmount = 1_000 * 10 ** 18;
+
         vm.prank(owner);
-        nexToken.mint(user, 1_000 * 10 ** 18);
+        IVesting(vestingContract).createVestingSchedule(user, start, cliffDuration, duration, totalAmount);
 
-        // Mock the vesting contract to simulate vesting behavior
-        vm.mockCall(
-            vestingContract,
-            abi.encodeWithSelector(IVesting.getVestedBalance.selector, user),
-            abi.encode(500 * 10 ** 18) // Only 500 tokens are vested
-        );
+        vm.warp(start + 15 days);
 
-        // Attempt transfer to a non-staking contract (should revert)
+        vm.prank(address(vestingContract));
+        nexToken.transfer(user, totalAmount);
+
         vm.prank(user);
-        vm.expectRevert("Transfer amount exceeds vested balance");
+        vm.expectRevert("Transfer amount exceeds available balance");
         nexToken.transfer(nonStakingContract, 100 * 10 ** 18);
 
-        // Attempt transfer to the staking contract (should succeed)
         vm.prank(user);
         nexToken.transfer(stakingContract, 100 * 10 ** 18);
 
-        // Validate staking contract received the tokens
         assertEq(nexToken.balanceOf(stakingContract), 100 * 10 ** 18);
 
-        // Validate user balance after successful transfer to staking contract
-        assertEq(nexToken.balanceOf(user), 900 * 10 ** 18);
-
-        // Validate non-staking contract balance remains unchanged
-        assertEq(nexToken.balanceOf(nonStakingContract), 0);
+        assertEq(nexToken.balanceOf(user), totalAmount - 100 * 10 ** 18);
     }
 
     function testTransferRestrictedByVestingContract() public {
-        // Mock vesting contract to return 500 vested tokens
         vm.mockCall(
             vestingContract,
             abi.encodeWithSelector(IVesting.getVestedBalance.selector, user),
@@ -174,7 +171,7 @@ contract NEXTokenTest is Test {
         nexToken.mint(user, 1_000 * 10 ** 18);
 
         vm.prank(user);
-        vm.expectRevert("Transfer amount exceeds vested balance");
+        vm.expectRevert("Transfer amount exceeds available balance");
         nexToken.transfer(address(0x6), 1_000 * 10 ** 18);
 
         vm.prank(user);
@@ -190,7 +187,7 @@ contract NEXTokenTest is Test {
         nexToken.mint(user, 1_000 * 10 ** 18);
 
         vm.prank(user);
-        vm.expectRevert("Transfer amount exceeds vested balance");
+        vm.expectRevert("Transfer amount exceeds available balance");
         nexToken.transfer(address(0x6), 1_000 * 10 ** 18);
 
         assertEq(nexToken.balanceOf(address(0x6)), 0);
@@ -203,5 +200,64 @@ contract NEXTokenTest is Test {
 
         vm.expectRevert("Vesting contract cannot be zero address");
         uninitializedToken.initialize(invalidVestingContract);
+    }
+
+    function testTransferBetweenUsersWithoutVesting() public {
+        address userA = address(0x10);
+        address userB = address(0x11);
+
+        vm.prank(owner);
+        nexToken.mint(userA, 1_000 * 10 ** 18);
+
+        uint256 lockedBalance = Vesting(vestingContract).getLockedBalance(userA);
+        assertEq(lockedBalance, 0);
+
+        vm.prank(userA);
+        nexToken.transfer(userB, 500 * 10 ** 18);
+
+        assertEq(nexToken.balanceOf(userA), 500 * 10 ** 18);
+        assertEq(nexToken.balanceOf(userB), 500 * 10 ** 18);
+    }
+
+    function testTransferToStakingDuringCliff() public {
+        uint256 start = block.timestamp;
+        uint256 cliffDuration = 30 days;
+        uint256 duration = 180 days;
+        uint256 totalAmount = 100_000 * 10 ** 18;
+
+        vm.prank(owner);
+        IVesting(vestingContract).createVestingSchedule(user, start, cliffDuration, duration, totalAmount);
+
+        vm.warp(start + 15 days);
+
+        vm.prank(address(vestingContract));
+        nexToken.transfer(user, totalAmount);
+
+        vm.prank(user);
+        nexToken.transfer(stakingContract, 50_000 * 10 ** 18);
+
+        assertEq(nexToken.balanceOf(stakingContract), 50_000 * 10 ** 18);
+    }
+
+    function testTransferToOthersDuringCliff() public {
+        uint256 start = block.timestamp;
+        uint256 cliffDuration = 30 days;
+        uint256 duration = 180 days;
+        uint256 totalAmount = 100_000 * 10 ** 18;
+
+        vm.prank(owner);
+        IVesting(vestingContract).createVestingSchedule(user, start, cliffDuration, duration, totalAmount);
+
+        vm.warp(start + 15 days);
+
+        vm.prank(address(vestingContract));
+        nexToken.transfer(user, totalAmount);
+
+        uint256 userBalance = nexToken.balanceOf(user);
+        assertEq(userBalance, totalAmount);
+
+        vm.prank(user);
+        vm.expectRevert("Transfer amount exceeds available balance");
+        nexToken.transfer(address(0x6), 10_000 * 10 ** 18);
     }
 }
