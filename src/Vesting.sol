@@ -17,7 +17,6 @@ contract Vesting is ReentrancyGuardUpgradeable, OwnableUpgradeable {
         uint256 duration;
         uint256 totalAmount;
         uint256 released;
-        uint256 remainingAmount;
     }
 
     mapping(address => VestingSchedule[]) public vestingSchedules;
@@ -27,6 +26,7 @@ contract Vesting is ReentrancyGuardUpgradeable, OwnableUpgradeable {
 
     function initialize(IERC20 _token) public initializer {
         __Ownable_init(msg.sender);
+        __ReentrancyGuard_init();
         require(address(_token) != address(0), "Token address cannot be zero");
         token = _token;
     }
@@ -60,8 +60,7 @@ contract Vesting is ReentrancyGuardUpgradeable, OwnableUpgradeable {
                 start: start,
                 duration: duration,
                 totalAmount: totalAmount,
-                released: 0,
-                remainingAmount: totalAmount
+                released: 0
             })
         );
 
@@ -94,36 +93,45 @@ contract Vesting is ReentrancyGuardUpgradeable, OwnableUpgradeable {
     /**
      * @dev Calculate the vested amount for a given schedule.
      */
-    // function _vestedAmount(VestingSchedule memory schedule) internal view returns (uint256) {
-    //     uint256 currentTime = block.timestamp;
-
-    //     if (currentTime < schedule.cliff) {
-    //         return 0;
-    //     } else if (currentTime >= schedule.start + schedule.duration) {
-    //         return schedule.totalAmount;
-    //     } else {
-    //         // uint256 timeElapsed = currentTime - schedule.start;
-    //         uint256 timeElapsed = currentTime >= schedule.cliff ? currentTime - schedule.start : 0;
-
-    //         uint256 vested = (schedule.totalAmount * timeElapsed) / schedule.duration;
-    //         return vested;
-    //     }
-    // }
-
     function _vestedAmount(VestingSchedule memory schedule) internal view returns (uint256) {
         uint256 currentTime = block.timestamp;
 
         if (currentTime < schedule.cliff) {
             return 0;
         } else if (currentTime >= schedule.start + schedule.duration) {
-            // return schedule.remainingAmount;
             return schedule.totalAmount;
         } else {
             uint256 timeElapsed = currentTime - schedule.start;
             uint256 vested = (schedule.totalAmount * timeElapsed) / schedule.duration;
-            // return vested - schedule.released;
             return vested;
         }
+    }
+
+    /**
+     * @dev Get the total locked (unvested) balance for a beneficiary.
+     */
+    function getLockedBalance(address beneficiary) external view returns (uint256) {
+        uint256 lockedBalance = 0;
+        for (uint256 i = 0; i < vestingSchedules[beneficiary].length; i++) {
+            VestingSchedule memory schedule = vestingSchedules[beneficiary][i];
+            uint256 vestedAmount = _vestedAmount(schedule);
+            uint256 lockedAmount = schedule.totalAmount - vestedAmount - schedule.released;
+            lockedBalance += lockedAmount;
+        }
+        return lockedBalance;
+    }
+
+    /**
+     * @dev Get the total vested balance for a beneficiary.
+     */
+    function getVestedBalance(address beneficiary) external view returns (uint256) {
+        uint256 vestedBalance = 0;
+        for (uint256 i = 0; i < vestingSchedules[beneficiary].length; i++) {
+            VestingSchedule memory schedule = vestingSchedules[beneficiary][i];
+            uint256 vestedAmount = _vestedAmount(schedule) - schedule.released;
+            vestedBalance += vestedAmount;
+        }
+        return vestedBalance;
     }
 
     /**
@@ -142,15 +150,5 @@ contract Vesting is ReentrancyGuardUpgradeable, OwnableUpgradeable {
      */
     function getVestingScheduleCount(address beneficiary) external view returns (uint256) {
         return vestingSchedules[beneficiary].length;
-    }
-
-    function getVestedBalance(address account) external view returns (uint256) {
-        uint256 totalBalance = 0;
-        for (uint256 i = 0; i < vestingSchedules[account].length; i++) {
-            VestingSchedule memory schedule = vestingSchedules[account][i];
-            uint256 vested = _vestedAmount(schedule);
-            totalBalance += vested - schedule.released;
-        }
-        return totalBalance;
     }
 }
