@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.18;
+pragma solidity ^0.8.26;
 
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {console} from "forge-std/Test.sol";
 
 contract Vesting is ReentrancyGuardUpgradeable, OwnableUpgradeable {
-    IERC20 public immutable token;
+    IERC20 public token;
 
     struct VestingSchedule {
         bool initialized;
@@ -16,6 +17,7 @@ contract Vesting is ReentrancyGuardUpgradeable, OwnableUpgradeable {
         uint256 duration;
         uint256 totalAmount;
         uint256 released;
+        uint256 remainingAmount;
     }
 
     mapping(address => VestingSchedule[]) public vestingSchedules;
@@ -23,10 +25,16 @@ contract Vesting is ReentrancyGuardUpgradeable, OwnableUpgradeable {
     event TokensReleased(address indexed beneficiary, uint256 amount);
     event VestingScheduleCreated(address indexed beneficiary, uint256 totalAmount);
 
-    constructor(IERC20 _token) {
+    function initialize(IERC20 _token) public initializer {
+        __Ownable_init(msg.sender);
         require(address(_token) != address(0), "Token address cannot be zero");
         token = _token;
     }
+
+    // constructor(IERC20 _token) {
+    //     require(address(_token) != address(0), "Token address cannot be zero");
+    //     token = _token;
+    // }
 
     /**
      * @dev Create a vesting schedule for a beneficiary.
@@ -52,7 +60,8 @@ contract Vesting is ReentrancyGuardUpgradeable, OwnableUpgradeable {
                 start: start,
                 duration: duration,
                 totalAmount: totalAmount,
-                released: 0
+                released: 0,
+                remainingAmount: totalAmount
             })
         );
 
@@ -73,10 +82,10 @@ contract Vesting is ReentrancyGuardUpgradeable, OwnableUpgradeable {
 
         require(unreleased > 0, "No tokens to release");
 
-        // Effects
         schedule.released += unreleased;
+        // schedule.remainingAmount -= unreleased;
 
-        // Interactions
+        require(token.balanceOf(address(this)) >= unreleased, "Insufficient tokens for transfer");
         require(token.transfer(msg.sender, unreleased), "Token transfer failed");
 
         emit TokensReleased(msg.sender, unreleased);
@@ -85,16 +94,35 @@ contract Vesting is ReentrancyGuardUpgradeable, OwnableUpgradeable {
     /**
      * @dev Calculate the vested amount for a given schedule.
      */
+    // function _vestedAmount(VestingSchedule memory schedule) internal view returns (uint256) {
+    //     uint256 currentTime = block.timestamp;
+
+    //     if (currentTime < schedule.cliff) {
+    //         return 0;
+    //     } else if (currentTime >= schedule.start + schedule.duration) {
+    //         return schedule.totalAmount;
+    //     } else {
+    //         // uint256 timeElapsed = currentTime - schedule.start;
+    //         uint256 timeElapsed = currentTime >= schedule.cliff ? currentTime - schedule.start : 0;
+
+    //         uint256 vested = (schedule.totalAmount * timeElapsed) / schedule.duration;
+    //         return vested;
+    //     }
+    // }
+
     function _vestedAmount(VestingSchedule memory schedule) internal view returns (uint256) {
         uint256 currentTime = block.timestamp;
 
         if (currentTime < schedule.cliff) {
             return 0;
         } else if (currentTime >= schedule.start + schedule.duration) {
+            // return schedule.remainingAmount;
             return schedule.totalAmount;
         } else {
             uint256 timeElapsed = currentTime - schedule.start;
-            return (schedule.totalAmount * timeElapsed) / schedule.duration;
+            uint256 vested = (schedule.totalAmount * timeElapsed) / schedule.duration;
+            // return vested - schedule.released;
+            return vested;
         }
     }
 
