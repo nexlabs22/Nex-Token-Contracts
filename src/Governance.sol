@@ -33,24 +33,40 @@ contract Governance is OwnableUpgradeable {
     ERC20VotesUpgradeable public token;
     uint256 public proposalCount;
     uint256 public timelockDuration;
+    uint256 public proposalThreshold;
+
+    // Multi-Sig Variables
+    uint256 public changeTimelockApprovalsCount;
+    uint256 public newTimelockDuration;
+    uint256 public changeTimelockApprovalsRequired;
+    address[] public approvers;
 
     mapping(uint256 => Proposal) public proposals;
     mapping(uint256 => mapping(address => bool)) public hasVoted;
+    mapping(address => bool) public isApprover;
+    mapping(address => bool) public hasApprovedChangeTimelock;
 
     event ProposalCreated(uint256 id, address proposer, string description);
     event Voted(uint256 proposalId, address voter, bool support, uint256 weight);
     event ProposalExecuted(uint256 id);
     event ProposalQueued(uint256 id, uint256 timelockEnd);
     event ProposalFailed(uint256 id);
+    event TimelockDurationChangeProposed(uint256 newDuration);
+    event TimelockDurationChanged(uint256 newDuration);
 
-    function initialize(ERC20VotesUpgradeable _token, uint256 _timelockDuration) public initializer {
+    function initialize(ERC20VotesUpgradeable _token, uint256 _timelockDuration, uint256 _proposalThreshold)
+        public
+        initializer
+    {
         __Ownable_init(msg.sender);
         token = _token;
         timelockDuration = _timelockDuration;
+        proposalThreshold = _proposalThreshold;
     }
 
     /**
-     * @dev Create a new proposal.
+     * @dev Allows any eligible token holder to create a proposal.
+     * Eligibility is determined by the proposal threshold.
      */
     function createProposal(
         string calldata description,
@@ -58,6 +74,9 @@ contract Governance is OwnableUpgradeable {
         uint256[] calldata values,
         bytes[] calldata callDatas
     ) external returns (uint256) {
+        uint256 proposerVotes = token.getPastVotes(msg.sender, block.number - 1);
+
+        require(proposerVotes >= proposalThreshold, "Insufficient voting power to create proposal");
         require(targets.length == callDatas.length, "Mismatched proposal data");
         require(targets.length == values.length, "Mismatched proposal values");
 
@@ -105,11 +124,15 @@ contract Governance is OwnableUpgradeable {
         emit Voted(proposalId, msg.sender, support, quadraticWeight);
     }
 
+    /**
+     * @dev Execute a proposal after the timelock period.
+     */
     function executeProposal(uint256 proposalId) external {
         Proposal storage proposal = proposals[proposalId];
         require(block.number > proposal.endBlock, "Voting has not ended");
         require(proposal.state != ProposalState.Executed, "Proposal already executed");
 
+        // Transition from Active to Succeeded/Failed
         if (proposal.state == ProposalState.Active) {
             if (proposal.yesVotes > proposal.noVotes) {
                 proposal.state = ProposalState.Succeeded;
@@ -120,12 +143,15 @@ contract Governance is OwnableUpgradeable {
             }
         }
 
+        // Transition from Succeeded to Queued
         if (proposal.state == ProposalState.Succeeded) {
             proposal.state = ProposalState.Queued;
             proposal.timelockEnd = block.timestamp + timelockDuration;
             emit ProposalQueued(proposalId, proposal.timelockEnd);
+            return;
         }
 
+        // Transition from Queued to Executed
         if (proposal.state == ProposalState.Queued) {
             if (block.timestamp >= proposal.timelockEnd) {
                 proposal.state = ProposalState.Executed;
@@ -140,6 +166,59 @@ contract Governance is OwnableUpgradeable {
         }
     }
 
+    /**
+     * @dev Multi-Signature function to propose a change to the timelock duration.
+     */
+    function proposeTimelockDurationChange(uint256 _newDuration) external {
+        require(isApprover[msg.sender], "Not an approver");
+        require(!hasApprovedChangeTimelock[msg.sender], "Already approved");
+
+        if (changeTimelockApprovalsCount == 0) {
+            newTimelockDuration = _newDuration;
+            emit TimelockDurationChangeProposed(_newDuration);
+        } else {
+            require(newTimelockDuration == _newDuration, "Different duration proposed");
+        }
+
+        hasApprovedChangeTimelock[msg.sender] = true;
+        changeTimelockApprovalsCount++;
+
+        if (changeTimelockApprovalsCount >= changeTimelockApprovalsRequired) {
+            timelockDuration = newTimelockDuration;
+            emit TimelockDurationChanged(newTimelockDuration);
+            // Reset approvals
+            resetChangeTimelockApprovals();
+        }
+    }
+
+    function resetChangeTimelockApprovals() internal {
+        for (uint256 i = 0; i < approvers.length; i++) {
+            hasApprovedChangeTimelock[approvers[i]] = false;
+        }
+        changeTimelockApprovalsCount = 0;
+    }
+
+    /**
+     * @dev Set the list of approvers for multi-signature operations.
+     */
+    function setApprovers(address[] calldata _approvers) external onlyOwner {
+        // Clear previous approvers
+        for (uint256 i = 0; i < approvers.length; i++) {
+            isApprover[approvers[i]] = false;
+        }
+        delete approvers;
+
+        // Set new approvers
+        for (uint256 i = 0; i < _approvers.length; i++) {
+            isApprover[_approvers[i]] = true;
+            approvers.push(_approvers[i]);
+        }
+        changeTimelockApprovalsRequired = _approvers.length / 2 + 1; // Majority required
+    }
+
+    /**
+     * @dev Check if a proposal is approved (succeeded in voting).
+     */
     function isProposalApproved(uint256 proposalId) external view returns (bool) {
         Proposal storage proposal = proposals[proposalId];
         return (proposal.yesVotes > proposal.noVotes)
