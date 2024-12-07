@@ -101,4 +101,18 @@ contract Treasury is Initializable, ReentrancyGuardUpgradeable {
 
         emit FundRequestExecuted(requestId, request.amount, request.recipient);
     }
+
+    /**
+     * @dev Sets a new governance contract address.
+     * @param _governanceContract The new governance contract address.
+     */
+    function setGovernanceContract(address _governanceContract) external {
+        require(_governanceContract != address(0), "Governance contract cannot be zero address");
+        require(msg.sender == address(governance), "Unauthorized");
+        governance = IGovernance(_governanceContract);
+    }
+
+    function getFundRequest(uint256 requestId) external view returns (FundRequest memory) {
+        return fundRequests[requestId];
+    }
 }
