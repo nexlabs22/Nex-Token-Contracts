@@ -4,7 +4,8 @@ pragma solidity ^0.8.26;
 import {ERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20VotesUpgradeable.sol";
+import {ERC20VotesUpgradeable} from
+    "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20VotesUpgradeable.sol";
 
 import {IVesting} from "./interfaces/IVesting.sol";
 
@@ -17,6 +18,7 @@ contract NEXToken is ERC20Upgradeable, OwnableUpgradeable, ReentrancyGuardUpgrad
 
     address public vestingContract;
     address public stakingContract;
+    address public treasuryContractAddress;
 
     // address public constant PUBLIC_SALE = 0xABC; // Replace with actual address
     // address public constant LIQUIDITY_POOL = 0x876; // Replace with actual address
@@ -51,15 +53,6 @@ contract NEXToken is ERC20Upgradeable, OwnableUpgradeable, ReentrancyGuardUpgrad
 
         // uint256 remainingBalance = balanceOf(address(this));
         // require(remainingBalance == 0, "All tokens must be distributed");
-    }
-
-    /**
-     * @dev Set the Staking Contract address.
-     */
-    function setStakingContract(address _stakingContract) external onlyOwner {
-        require(_stakingContract != address(0), "Staking contract cannot be zero address");
-        stakingContract = _stakingContract;
-        emit StakingContractUpdated(_stakingContract);
     }
 
     /**
@@ -129,6 +122,23 @@ contract NEXToken is ERC20Upgradeable, OwnableUpgradeable, ReentrancyGuardUpgrad
     }
 
     /**
+     * @dev Set the Treasury Contract address.
+     */
+    function setTreasuryContract(address _treasuryContract) external onlyOwner {
+        require(_treasuryContract != address(0), "Treasury contract cannot be zero address");
+        treasuryContractAddress = _treasuryContract;
+    }
+
+    /**
+     * @dev Set the Staking Contract address.
+     */
+    function setStakingContract(address _stakingContract) external onlyOwner {
+        require(_stakingContract != address(0), "Staking contract cannot be zero address");
+        stakingContract = _stakingContract;
+        emit StakingContractUpdated(_stakingContract);
+    }
+
+    /**
      * @dev Overrides the ERC20 _update function to enforce vesting restrictions.
      *      Allows transfers to the staking contract irrespective of vesting.
      * @param from Address tokens are transferred from.
@@ -154,6 +164,10 @@ contract NEXToken is ERC20Upgradeable, OwnableUpgradeable, ReentrancyGuardUpgrad
             return;
         }
 
+        if (from == treasuryContractAddress) {
+            return;
+        }
+
         require(!_blacklist[from] && !_blacklist[to], "Address is blacklisted");
 
         if (vestingContract != address(0)) {
@@ -175,12 +189,6 @@ contract NEXToken is ERC20Upgradeable, OwnableUpgradeable, ReentrancyGuardUpgrad
 
             require(amount <= transferableBalance, "Transfer amount exceeds available balance");
         }
-
-        // if (vestingContract != address(0) && from != vestingContract) {
-        //     IVesting vesting = IVesting(vestingContract);
-        //     uint256 vestedBalance = vesting.getVestedBalance(from);
-        //     require(amount <= vestedBalance, "Transfer amount exceeds vested balance");
-        // }
     }
 
     uint256[50] private __gap;
